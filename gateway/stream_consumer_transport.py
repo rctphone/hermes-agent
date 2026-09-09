@@ -35,7 +35,17 @@ class StreamTransportMixin:
                     kwargs["metadata"] = self.metadata
             except (TypeError, ValueError):
                 pass
-        return await self.adapter.edit_message(**kwargs)
+        for attempt in range(3):
+            result = await self.adapter.edit_message(**kwargs)
+            raw = getattr(result, "raw_response", None)
+            if (result.success or getattr(result, "retryable", False) is not True
+                    or self._is_flood_error(result)
+                    or (isinstance(raw, dict) and raw.get("partial_overflow"))
+                    or attempt == 2):
+                return result
+            # A lost edit reply may already have changed the preview. Retrying
+            # that same id is safe; sending its presumed missing tail duplicates it.
+            await asyncio.sleep(0.5 * (2 ** attempt))
 
     async def _try_seed_frame(self, fail_log: str, *, exc_info: bool = False) -> bool:
         """Open a native stream with an empty seed frame (typing indicator before any token) as a
